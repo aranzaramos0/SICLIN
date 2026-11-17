@@ -38,7 +38,7 @@ jobs:
           curl -fsS --retry 20 --retry-delay 2 --retry-connrefused http://localhost:8081/health
 
       - name: Formatear PHP modificado
-        run: docker compose exec -T portal vendor/bin/pint --format agent app/Console/Commands/SiclinSetup.php tests/Feature/PresentationSetupTest.php
+        run: docker compose exec -T portal vendor/bin/pint --format agent app/Console/Commands/SiclinSetup.php tests/Feature/PresentationSetupTest.php database/seeders/DatabaseSeeder.php database/seeders/ClinicalDemoSeeder.php
 
       - name: Comprobar vistas Blade
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Integración con PostgreSQL y Quarkus
         run: |
           docker compose exec -T postgres-db createdb -U unifranz_user siclin_test
-          docker compose exec -T -e RUN_INTEGRATION=1 portal php artisan test --compact --configuration=phpunit.pgsql.xml --filter=OptimizerIntegrationTest
+          docker compose exec -T -e RUN_INTEGRATION=1 portal vendor/bin/phpunit --configuration phpunit.pgsql.xml --filter OptimizerIntegrationTest
 
       - name: Pruebas del optimizador Java
         run: docker run --rm -v "$PWD/optimizer-quarkus:/app" -w /app maven:3.9-eclipse-temurin-21 mvn -B -DargLine= test
