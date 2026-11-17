@@ -1,0 +1,76 @@
+name: Preparar SICLIN Windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/preparar_paquete.py'
+      - '.github/workflows/paquete.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  paquete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      - name: Preparar distribución
+        run: |
+          python3 scripts/preparar_paquete.py
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          p = Path("portal/.env")
+          content = Path("portal/.env.example").read_text()
+          key = base64.b64encode(os.urandom(32)).decode()
+          p.write_text(content.replace("APP_KEY=", "APP_KEY=base64:" + key))
+          PY
+          node --check portal/public/siclin.js
+          docker compose config --quiet
+
+      - name: Construir y arrancar servicios
+        run: |
+          docker compose up -d --build
+          curl -fsS --retry 20 --retry-delay 2 --retry-connrefused http://localhost:8081/health
+
+      - name: Formatear PHP modificado
+        run: docker compose exec -T portal vendor/bin/pint --format agent app/Console/Commands/SiclinSetup.php tests/Feature/PresentationSetupTest.php
+
+      - name: Comprobar vistas Blade
+        run: |
+          docker compose exec -T portal php artisan view:cache
+          docker compose exec -T portal php artisan view:clear
+
+      - name: Pruebas de Laravel
+        run: docker compose exec -T portal php artisan test --compact
+
+      - name: Integración con PostgreSQL y Quarkus
+        run: |
+          docker compose exec -T postgres-db createdb -U unifranz_user siclin_test
+          docker compose exec -T -e RUN_INTEGRATION=1 portal php artisan test --compact --configuration=phpunit.pgsql.xml --filter=OptimizerIntegrationTest
+
+      - name: Pruebas del optimizador Java
+        run: docker run --rm -v "$PWD/optimizer-quarkus:/app" -w /app maven:3.9-eclipse-temurin-21 mvn -B -DargLine= test
+
+      - name: Empaquetar fuentes
+        run: python3 scripts/preparar_paquete.py --package-only
+
+      - name: Guardar ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SICLIN-Windows
+          path: .release/SICLIN/
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Registro si falla una comprobación
+        if: failure()
+        run: docker compose logs --tail=100 portal optimizer postgres-db
+
+      - name: Detener servicios
+        if: always()
+        run: docker compose down
